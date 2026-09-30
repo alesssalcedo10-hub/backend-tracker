@@ -33,6 +33,7 @@
     <button id="actualizar">Actualizar</button>
   </div>
   <p class="nota">Ubicación compartida por Aless. El mapa se actualiza cada 5 segundos mientras el teléfono envía su posición.</p>
+  <div class="datos"><h2>Geocerca</h2><p id="zona-estado">Consultando zona…</p><div id="zona-eventos"></div></div>
 </main>
 <script>
   const servidor = location.origin;
@@ -49,12 +50,13 @@
     mapa = new mapboxgl.Map({ container: 'map', accessToken: tokenMapbox,
       style: 'mapbox://styles/mapbox/streets-v12', center: [0, 20], zoom: 1.5 });
     mapa.addControl(new mapboxgl.NavigationControl());
+    mapa.on('load',dibujarZona);
   } catch (error) {
     estado.textContent = 'No se pudo cargar Mapbox. Comprueba tu conexión.';
   }
 
   }
-  iniciarMapa();
+
 
   async function actualizar() {
     if (consultando) return;
@@ -93,6 +95,51 @@
   document.getElementById('actualizar').onclick = actualizar;
   actualizar();
   setInterval(() => { if (!document.hidden) actualizar(); }, 5000);
+  let zonaActual;
+  function dibujarZona() {
+    if (!mapa || !mapa.isStyleLoaded() || !zonaActual) return;
+    const zona = zonaActual, puntos = [], rad = Math.PI / 180;
+    const lat = zona.latitud * rad, lng = zona.longitud * rad, d = zona.radio / 6371000;
+    for(let i=0;i<64;i++) {
+      const rumbo=i*2*Math.PI/64;
+      const a=Math.asin(Math.sin(lat)*Math.cos(d)+Math.cos(lat)*Math.sin(d)*Math.cos(rumbo));
+      const b=lng+Math.atan2(Math.sin(rumbo)*Math.sin(d)*Math.cos(lat),Math.cos(d)-Math.sin(lat)*Math.sin(a));
+      puntos.push([((b/rad+540)%360)-180,a/rad]);
+    }
+    puntos.push(puntos[0]);
+    const data={type:'Feature',properties:{},geometry:{type:'Polygon',coordinates:[puntos]}};
+    if(mapa.getSource('geocerca')) mapa.getSource('geocerca').setData(data);
+    else {
+      mapa.addSource('geocerca',{type:'geojson',data});
+      mapa.addLayer({id:'zona-relleno',type:'fill',source:'geocerca',paint:{'fill-color':'#167d8d','fill-opacity':0.18}});
+      mapa.addLayer({id:'zona-borde',type:'line',source:'geocerca',paint:{'line-color':'#167d8d','line-width':2}});
+    }
+  }
+  let consultandoZona = false;
+  async function consultarZona() {
+    if(consultandoZona) return;
+    consultandoZona = true;
+    try {
+      const r=await fetch(`${servidor}/api/geocerca/${dispositivo}`,{signal:AbortSignal.timeout(45000)});
+      if(!r.ok) throw new Error('Consulta no disponible');
+      const data=await r.json();
+      zonaActual=data.zona;
+      const texto=document.getElementById('zona-estado');
+      texto.textContent=zonaActual ? `${zonaActual.nombre} · ${zonaActual.radio} m · ${zonaActual.estado==='dentro'?'Dentro':zonaActual.estado==='fuera'?'Fuera':'Esperando GPS preciso'}` : 'Aless todavía no ha definido una geocerca.';
+      dibujarZona();
+      const lista=document.getElementById('zona-eventos');lista.replaceChildren();
+      for(const evento of data.eventos.slice(0,5)) {
+        const p=document.createElement('p');
+        p.textContent=`${evento.tipo==='entrada'?'Entrada':'Salida'} · ${evento.nombre} · ${new Date(evento.fecha_hora).toLocaleString('es')}`;
+        lista.appendChild(p);
+      }
+    }catch(_){document.getElementById('zona-estado').textContent='No se pudo consultar la geocerca. Se volverá a intentar.';}
+    finally{consultandoZona=false;}
+  }
+  consultarZona();
+  setInterval(()=>{if(!document.hidden)consultarZona();},15000);
+
+  iniciarMapa();
 </script>
 </body>
 </html>
