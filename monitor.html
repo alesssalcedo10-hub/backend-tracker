@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ubicación de Aless</title>
+  <link rel="stylesheet" href="https://api.mapbox.com/mapbox-gl-js/v3.30.0/mapbox-gl.css">
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.30.0/mapbox-gl.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; color: #222; }
+    main { max-width: 1000px; margin: auto; }
+    h1 { font-size: 24px; }
+    #map { height: 55vh; min-height: 300px; border: 1px solid #ccc; background: #e8edf1; }
+    .datos { background: white; border: 1px solid #ddd; padding: 15px; margin-top: 15px; }
+    p { margin: 9px 0; line-height: 1.5; }
+    button { padding: 9px 15px; cursor: pointer; }
+    a { color: #1565c0; }
+    .nota { font-size: 13px; color: #555; }
+    #estado { font-size: 14px; }
+    @media(max-width:600px) { body { margin: 12px; } #map { height: 45vh; } }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Ubicación de Aless</h1>
+  <p>Dispositivo: <b>celular_01</b></p>
+  <div id="map" aria-label="Mapa de la última ubicación guardada"></div>
+  <div class="datos">
+    <p>Latitud: <span id="latitud">—</span></p>
+    <p>Longitud: <span id="longitud">—</span></p>
+    <p>Fecha y hora: <span id="fecha">—</span></p>
+    <p id="estado" role="status">Consultando la base de datos…</p>
+    <button id="actualizar">Actualizar</button>
+  </div>
+  <p class="nota">Ubicación compartida por Aless. El mapa se actualiza cada 5 segundos mientras el teléfono envía su posición.</p>
+</main>
+<script>
+  const servidor = location.origin;
+  const dispositivo = 'celular_01'; // Mismo identificador que utiliza tu historial.
+
+  const estado = document.getElementById('estado');
+  let mapa, marcador, consultando = false, primeraUbicacion = true;
+
+  async function iniciarMapa() {
+  try {
+    const config = await fetch('/config').then(r => r.json());
+    const tokenMapbox = config.mapboxToken;
+    if (!tokenMapbox) throw new Error('Mapbox sin configurar');
+    mapa = new mapboxgl.Map({ container: 'map', accessToken: tokenMapbox,
+      style: 'mapbox://styles/mapbox/streets-v12', center: [0, 20], zoom: 1.5 });
+    mapa.addControl(new mapboxgl.NavigationControl());
+  } catch (error) {
+    estado.textContent = 'No se pudo cargar Mapbox. Comprueba tu conexión.';
+  }
+
+  }
+  iniciarMapa();
+
+  async function actualizar() {
+    if (consultando) return;
+    consultando = true;
+    try {
+      const credencial = sessionStorage.getItem('aless.auth');
+      const respuesta = await fetch(`${servidor}/api/ubicacion/${dispositivo}/ultima`, {
+        signal: AbortSignal.timeout(45000),
+        headers: credencial ? { Authorization: 'Bearer ' + credencial } : {}
+      });
+      if (respuesta.status === 404) {
+        estado.textContent = 'Todavía no hay registros para este dispositivo.';
+        return;
+      }
+      if (!respuesta.ok) throw new Error('HTTP ' + respuesta.status);
+      const ubicacion = await respuesta.json();
+      const lat = Number(ubicacion.latitud), lng = Number(ubicacion.longitud);
+      if (ubicacion.latitud == null || ubicacion.longitud == null || !Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat)>90 || Math.abs(lng)>180) throw new Error('Coordenadas inválidas');
+      document.getElementById('latitud').textContent = lat.toFixed(6);
+      document.getElementById('longitud').textContent = lng.toFixed(6);
+      document.getElementById('fecha').textContent = new Date(ubicacion.fecha_hora).toLocaleString('es');
+      const reciente = Date.now() - new Date(ubicacion.fecha_hora).getTime() < 60000;
+      estado.textContent = reciente ? 'Registro reciente recibido del servidor.' : 'Este es un registro anterior. Inicia la app para guardar uno nuevo.';
+      if (mapa) {
+        if (!marcador) marcador = new mapboxgl.Marker().setLngLat([lng, lat]).addTo(mapa);
+        marcador.setLngLat([lng, lat]);
+        mapa.easeTo({ center: [lng, lat], zoom: primeraUbicacion ? 15 : mapa.getZoom() });
+        primeraUbicacion = false;
+      }
+    } catch (error) {
+      estado.textContent = 'No se pudo consultar el servidor. Se volverá a intentar. (' + error.message + ')';
+    } finally {
+      consultando = false;
+    }
+  }
+  document.getElementById('actualizar').onclick = actualizar;
+  actualizar();
+  setInterval(() => { if (!document.hidden) actualizar(); }, 5000);
+</script>
+</body>
+</html>
+
