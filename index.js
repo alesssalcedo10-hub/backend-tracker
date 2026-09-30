@@ -6,6 +6,16 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Pagina publica para compartir la ubicacion de Aless.
+app.get(['/','/monitor','/monitor/'], (_req,res) => {
+  res.set('Cache-Control','no-store');
+  res.sendFile(require('path').join(__dirname,'monitor.html'));
+});
+app.get('/config', (_req,res) => {
+  const token = process.env.MAPBOX_PUBLIC_TOKEN || '';
+  res.json({mapboxToken: token.startsWith('pk.') ? token : ''});
+});
+
 // Se conecta a la BD mediante la variable de entorno DATABASE_URL
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
